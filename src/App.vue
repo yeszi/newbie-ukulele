@@ -496,3 +496,5 @@ onMounted(() => {
 .btn-small-back { background: rgba(0,0,0,0.5); border: 1px solid #aaa; color: white; padding: 5px 10px; border-radius: 10px; cursor: pointer; font-size: 0.8rem; margin-right: 10px; }
 .btn-small-back:hover { background: #555; }
 </style>
+
+/** */
