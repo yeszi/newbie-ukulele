@@ -10,24 +10,21 @@ import { FACEMESH_TESSELATION, FACEMESH_RIGHT_EYE, FACEMESH_LEFT_EYE } from '@me
 const currentStep = ref('login'); 
 const username = ref('');
 const userLevel = ref('pemula');
-const status = ref("Menyiapkan Ruang Belajar...");
+const status = ref("Menyiapkan...");
 const isCheckingName = ref(false); 
 
-// --- STATE ADMIN & EDIT ---
+// --- STATE ADMIN ---
 const showAdminLogin = ref(false);
 const adminEmail = ref('');
 const adminPassword = ref('');
 const isLoggingIn = ref(false);
-
-// State Form Lagu
 const newSongTitle = ref('');
 const newSongSlug = ref('');
 const newSongSequence = ref([]);
 const selectedBaseChord = ref('C Major');
 const chordCustomLabel = ref('');
-const editingSongId = ref(null); // ID lagu yang sedang diedit (null = mode tambah)
+const editingSongId = ref(null); 
 
-// --- LIBRARY CHORD ---
 const LIBRARY_CHORDS = {
   'C Major': { rootFreq: 261.63, dots: [{s:1, f:3}] },
   'A Minor': { rootFreq: 440.00, dots: [{s:4, f:2}] },
@@ -37,7 +34,7 @@ const LIBRARY_CHORDS = {
   'D Minor': { rootFreq: 293.66, dots: [{s:2, f:1}, {s:4, f:2}, {s:3, f:2}] }
 };
 
-// --- STATE APLIKASI ---
+// --- STATE APP ---
 const isWajahTerdeteksi = ref(false);
 const isSaving = ref(false);       
 const detectedPitch = ref(0);      
@@ -50,7 +47,6 @@ const activeChordIndex = ref(0);
 const availableSongs = ref([]); 
 const isLoadingMenu = ref(false);
 
-// Computed Chord
 const currentChord = computed(() => {
   if (songChords.value.length === 0) return { name: 'Loading...', rootFreq: 0, dots: [] };
   return songChords.value[activeChordIndex.value];
@@ -63,186 +59,96 @@ let microphone = null;
 let audioAnimationId = null;
 const audioBuffer = new Float32Array(2048); 
 
-// ==========================================
-//  FUNGSI ADMIN (LOGIN & LOGOUT)
-// ==========================================
+// --- METRIK MACHINE LEARNING (DATA POINT) ---
+let chordStartTime = 0;   
+let tempEarData = [];     
+let tempGazeData = [];
+// Variable baru untuk analisis Paham/Tidak Paham
+let mistakeCount = 0;     // Jumlah nada salah sebelum ketemu nada benar
+let hesitationTime = 0;   // Waktu diam (ragu-ragu) sebelum mulai main
+let isChordStarted = false; // Flag penanda user sudah mulai genjreng
 
+// ==========================================
+//  ADMIN LOGIC
+// ==========================================
 const handleAdminLogin = async () => {
-  if(!adminEmail.value || !adminPassword.value) { alert("Isi email dan password!"); return; }
+  if(!adminEmail.value || !adminPassword.value) { alert("Isi email/password!"); return; }
   isLoggingIn.value = true;
   try {
-    const { error } = await supabase.auth.signInWithPassword({
-      email: adminEmail.value, password: adminPassword.value,
-    });
+    const { error } = await supabase.auth.signInWithPassword({ email: adminEmail.value, password: adminPassword.value });
     if (error) throw error;
-    showAdminLogin.value = false;
-    currentStep.value = 'admin';
-    adminEmail.value = ''; adminPassword.value = '';
-    fetchSongsMenu(); // Load daftar lagu saat masuk admin
+    showAdminLogin.value = false; currentStep.value = 'admin';
+    adminEmail.value = ''; adminPassword.value = ''; fetchSongsMenu(); 
   } catch (err) { alert("Login Gagal: " + err.message); } 
   finally { isLoggingIn.value = false; }
 };
-
-const handleAdminLogout = async () => {
-  await supabase.auth.signOut();
-  currentStep.value = 'login';
-};
-
-// ==========================================
-//  FUNGSI CRUD (CREATE, UPDATE, DELETE)
-// ==========================================
+const handleAdminLogout = async () => { await supabase.auth.signOut(); currentStep.value = 'login'; };
 
 const addChordToSequence = () => {
   if (!selectedBaseChord.value) return;
   const baseData = LIBRARY_CHORDS[selectedBaseChord.value];
-  const displayName = chordCustomLabel.value 
-    ? `${selectedBaseChord.value.split(' ')[0]} (${chordCustomLabel.value})` 
-    : selectedBaseChord.value;
-
-  newSongSequence.value.push({
-    name: displayName,
-    rootFreq: baseData.rootFreq,
-    dots: baseData.dots
-  });
+  const displayName = chordCustomLabel.value ? `${selectedBaseChord.value.split(' ')[0]} (${chordCustomLabel.value})` : selectedBaseChord.value;
+  newSongSequence.value.push({ name: displayName, rootFreq: baseData.rootFreq, dots: baseData.dots });
   chordCustomLabel.value = '';
 };
-
 const removeLastChord = () => { newSongSequence.value.pop(); };
-
-// --- 1. EDIT: AMBIL DATA LAGU ---
 const prepareEditSong = async (song) => {
-  // Masukkan data lagu yang dipilih ke dalam form
-  editingSongId.value = song.id;
-  newSongTitle.value = song.title;
-  newSongSlug.value = song.slug;
-  
-  // Kita perlu fetch detail chord-nya karena di menu list cuma ada title/slug
+  editingSongId.value = song.id; newSongTitle.value = song.title; newSongSlug.value = song.slug;
   try {
-    const { data, error } = await supabase.from('songs').select('chord_sequence').eq('id', song.id).single();
-    if(error) throw error;
-    newSongSequence.value = data.chord_sequence;
-    
-    // Scroll ke atas biar kelihatan formnya
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  } catch(err) { alert("Gagal ambil detail lagu."); }
+    const { data } = await supabase.from('songs').select('chord_sequence').eq('id', song.id).single();
+    newSongSequence.value = data.chord_sequence; window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch(err) { alert("Gagal ambil data."); }
 };
-
-// --- 2. BATAL EDIT ---
-const cancelEdit = () => {
-  editingSongId.value = null;
-  newSongTitle.value = '';
-  newSongSlug.value = '';
-  newSongSequence.value = [];
-};
-
-// --- 3. HAPUS LAGU ---
+const cancelEdit = () => { editingSongId.value = null; newSongTitle.value = ''; newSongSlug.value = ''; newSongSequence.value = []; };
 const deleteSong = async (songId) => {
-  if(!confirm("Yakin ingin MENGHAPUS lagu ini selamanya?")) return;
-  
-  try {
-    const { error } = await supabase.from('songs').delete().eq('id', songId);
-    if(error) throw error;
-    alert("Lagu berhasil dihapus.");
-    fetchSongsMenu(); // Refresh daftar
-  } catch(err) { alert("Gagal hapus: " + err.message); }
+  if(!confirm("Hapus lagu ini?")) return;
+  await supabase.from('songs').delete().eq('id', songId);
+  alert("Terhapus."); fetchSongsMenu();
 };
-
-// --- 4. SIMPAN (INSERT / UPDATE) ---
 const saveSongToDB = async () => {
-  if(!newSongTitle.value || !newSongSlug.value || newSongSequence.value.length === 0) {
-    alert("Data lagu belum lengkap!"); return;
-  }
-
-  const payload = {
-    title: newSongTitle.value,
-    slug: newSongSlug.value.toLowerCase().replace(/\s+/g, '-'),
-    chord_sequence: newSongSequence.value
-  };
-
-  try {
-    if (editingSongId.value) {
-      // --- MODE EDIT (UPDATE) ---
-      const { error } = await supabase.from('songs').update(payload).eq('id', editingSongId.value);
-      if (error) throw error;
-      alert("✅ Lagu Berhasil Diperbarui!");
-    } else {
-      // --- MODE BARU (INSERT) ---
-      const { error } = await supabase.from('songs').insert([payload]);
-      if (error) throw error;
-      alert("✅ Lagu Baru Berhasil Disimpan!");
-    }
-    
-    cancelEdit(); // Bersihkan form
-    fetchSongsMenu(); // Refresh daftar
-
-  } catch (err) { alert("Gagal simpan: " + err.message); }
+  if(!newSongTitle.value || !newSongSequence.value.length) { alert("Data kurang!"); return; }
+  const payload = { title: newSongTitle.value, slug: newSongSlug.value.toLowerCase().replace(/\s+/g, '-'), chord_sequence: newSongSequence.value };
+  if (editingSongId.value) await supabase.from('songs').update(payload).eq('id', editingSongId.value);
+  else await supabase.from('songs').insert([payload]);
+  alert("Disimpan!"); cancelEdit(); fetchSongsMenu();
 };
 
 // ==========================================
-//  LOGIC USER
+//  USER LOGIC
 // ==========================================
-
 const fetchSongsMenu = async () => {
   isLoadingMenu.value = true;
-  try {
-    // Ambil ID, Title, Slug untuk menu & list admin
-    const { data, error } = await supabase.from('songs').select('id, title, slug').order('id', { ascending: true });
-    if (error) throw error;
-    availableSongs.value = data;
-  } catch (err) { console.error(err); } 
-  finally { isLoadingMenu.value = false; }
+  const { data } = await supabase.from('songs').select('id, title, slug').order('id', { ascending: true });
+  availableSongs.value = data || []; isLoadingMenu.value = false;
 };
-
 const handleLogin = async () => {
-  const inputName = username.value.trim();
-  if (!inputName) { alert("Isi nama dulu!"); return; }
+  if (!username.value.trim()) { alert("Isi nama!"); return; }
   isCheckingName.value = true; 
-  try {
-    const { data } = await supabase.from('tracking_logs').select('username').eq('username', inputName).limit(1);
-    if (data && data.length > 0) {
-      if (confirm(`Halo ${inputName}! Masuk Mode Latihan?`)) { isPracticeMode.value = true; } 
-      else { isCheckingName.value = false; return; }
-    } else { isPracticeMode.value = false; }
-    currentStep.value = 'intro';
-    fetchSongsMenu(); 
-  } catch (err) { alert("Koneksi Error"); } finally { isCheckingName.value = false; }
+  const { data } = await supabase.from('tracking_logs').select('username').eq('username', username.value).limit(1);
+  if (data?.length) {
+    if (confirm(`Halo ${username.value}! Masuk Mode Latihan (Tidak Direkam)?`)) isPracticeMode.value = true;
+    else isPracticeMode.value = false;
+  } else isPracticeMode.value = false;
+  currentStep.value = 'intro'; fetchSongsMenu(); isCheckingName.value = false;
 };
-
 const selectSongAndStart = async (slug) => {
-  try {
-    const { data, error } = await supabase.from('songs').select('*').eq('slug', slug).single();
-    if(error) throw error;
-    songChords.value = data.chord_sequence;
-    selectedSongTitle.value = data.title;
-    startSession(); 
-  } catch(err) { alert("Gagal memuat lagu."); }
+  const { data } = await supabase.from('songs').select('*').eq('slug', slug).single();
+  songChords.value = data.chord_sequence; selectedSongTitle.value = data.title; startSession(); 
 };
-
-const goBack = () => {
-  if(audioContext && audioContext.state !== 'closed') { audioContext.suspend(); }
-  currentStep.value = 'intro';
-  isSessionFinished.value = false;
-  activeChordIndex.value = 0;
-};
+const goBack = () => { if(audioContext) audioContext.suspend(); currentStep.value = 'intro'; isSessionFinished.value = false; activeChordIndex.value = 0; };
 
 // ==========================================
-//  AUDIO & VISUAL ENGINE
+//  CORE ENGINE (AUDIO & ML DATA)
 // ==========================================
-
 const startSession = async () => {
-  try {
-    status.value = "Koneksi Audio...";
-    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    await audioContext.resume();
-    if (!microphone) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        analyser = audioContext.createAnalyser(); analyser.fftSize = 2048; 
-        microphone = audioContext.createMediaStreamSource(stream); microphone.connect(analyser);
-    } else { await audioContext.resume(); }
-    currentStep.value = 'belajar';
-    status.value = selectedSongTitle.value;
-    resetChordMetrics(); analyzeAudioLoop(); 
-  } catch (err) { alert("Mic Error! Refresh."); }
+  if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  await audioContext.resume();
+  if (!microphone) {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      analyser = audioContext.createAnalyser(); analyser.fftSize = 2048; 
+      microphone = audioContext.createMediaStreamSource(stream); microphone.connect(analyser);
+  }
+  currentStep.value = 'belajar'; resetChordMetrics(); analyzeAudioLoop(); 
 };
 
 const autoCorrelate = (buf, sampleRate) => {
@@ -268,8 +174,33 @@ const analyzeAudioLoop = () => {
   if (currentStep.value !== 'belajar') return;
   analyser.getFloatTimeDomainData(audioBuffer);
   const pitch = autoCorrelate(audioBuffer, audioContext.sampleRate);
-  if (pitch !== -1) { detectedPitch.value = Math.round(pitch); checkPitchMatch(pitch); } 
-  else { detectedPitch.value = 0; isPitchCorrect.value = false; }
+  
+  if (pitch !== -1) { 
+    detectedPitch.value = Math.round(pitch); 
+    
+    // --- LOGIC DETEKSI KESALAHAN & RAGU (DATA POINT ML) ---
+    if (!currentChord.value) return;
+    const target = currentChord.value.rootFreq;
+
+    // 1. Deteksi Keragu-raguan (Hesitation)
+    // Jika user baru mulai main setelah sekian detik diam
+    if (!isChordStarted) {
+        isChordStarted = true;
+        hesitationTime = Date.now() - chordStartTime;
+    }
+
+    // 2. Deteksi Kesalahan (Mistake)
+    // Jika nada terdengar (rms > 0.02) TAPI selisih frekuensi jauh (> 50Hz)
+    // Berarti user salah kunci
+    if (Math.abs(pitch - target) > 50) {
+        // Debounce sedikit biar gak spam counter
+        if (Math.random() > 0.85) mistakeCount++;
+    }
+
+    checkPitchMatch(pitch); 
+  } else { 
+    detectedPitch.value = 0; isPitchCorrect.value = false; 
+  }
   audioAnimationId = requestAnimationFrame(analyzeAudioLoop);
 };
 
@@ -287,7 +218,9 @@ const handleCorrectChord = async () => {
 };
 
 const resetChordMetrics = () => {
-  chordStartTime = Date.now(); tempEarData = []; tempGazeData = [];
+  chordStartTime = Date.now(); 
+  tempEarData = []; tempGazeData = [];
+  mistakeCount = 0; hesitationTime = 0; isChordStarted = false; // Reset ML vars
   isPitchCorrect.value = false; isSaving.value = false; detectedPitch.value = 0;
 };
 const nextChord = () => {
@@ -303,15 +236,26 @@ const handleRetrySameUser = () => {
 
 const saveToSupabase = async () => {
   if (isPracticeMode.value) return; 
-  const endTime = Date.now(); const duration = endTime - chordStartTime; 
-  const sumEar = tempEarData.reduce((a, b) => a + b, 0); const avgEar = tempEarData.length > 0 ? (sumEar / tempEarData.length) : 0;
-  const sumGaze = tempGazeData.reduce((a, b) => a + b, 0); const avgGaze = tempGazeData.length > 0 ? (sumGaze / tempGazeData.length) : 0;
+  const endTime = Date.now(); 
+  const avgEar = tempEarData.length ? (tempEarData.reduce((a,b)=>a+b,0)/tempEarData.length) : 0;
+  const avgGaze = tempGazeData.length ? (tempGazeData.reduce((a,b)=>a+b,0)/tempGazeData.length) : 0;
+  
   await supabase.from('tracking_logs').insert([{
     username: username.value, level: userLevel.value, chord_target: currentChord.value.name,
-    duration_ms: duration, avg_ear: parseFloat(avgEar.toFixed(3)) || 0, avg_gaze: parseFloat(avgGaze.toFixed(3)) || 0,
+    duration_ms: endTime - chordStartTime, // Lama penyelesaian
+    avg_ear: parseFloat(avgEar.toFixed(3)), // Fokus mata
+    avg_gaze: parseFloat(avgGaze.toFixed(3)), // Lirikan
+    mistake_count: mistakeCount, // Jumlah salah nada
+    hesitation_ms: hesitationTime, // Waktu mikir
     created_at: new Date().toISOString()
   }]);
 };
+
+// --- VISUALISASI ---
+const videoElement = ref(null); const canvasElement = ref(null);
+const getDistance = (p1, p2) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+const calculateEAR = (landmarks) => getDistance(landmarks[159], landmarks[145]) / getDistance(landmarks[33], landmarks[133]);
+const calculateGaze = (landmarks) => getDistance(landmarks[468], landmarks[33]) / getDistance(landmarks[468], landmarks[133]);
 
 const onResults = (results) => {
   if (currentStep.value !== 'belajar') return;
@@ -330,9 +274,7 @@ const onResults = (results) => {
            tempEarData.push(calculateEAR(landmarks)); 
            tempGazeData.push(calculateGaze(landmarks)); 
         }
-        if (drawConnectors && FACEMESH_TESSELATION) {
-            drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {color: '#00FF00', lineWidth: 1}); 
-        }
+        if (drawConnectors && FACEMESH_TESSELATION) drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {color: '#00FF00', lineWidth: 1});
         if (landmarks[468] && landmarks[473]) {
             const leftIris = landmarks[468]; const rightIris = landmarks[473];
             ctx.fillStyle = "#FF0000"; 
@@ -344,12 +286,6 @@ const onResults = (results) => {
     ctx.restore();
   }
 }
-
-// MediaPipe Helper Vars
-const videoElement = ref(null); const canvasElement = ref(null);
-const getDistance = (p1, p2) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
-const calculateEAR = (landmarks) => getDistance(landmarks[159], landmarks[145]) / getDistance(landmarks[33], landmarks[133]);
-const calculateGaze = (landmarks) => getDistance(landmarks[468], landmarks[33]) / getDistance(landmarks[468], landmarks[133]);
 
 onMounted(() => {
   const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
@@ -364,16 +300,12 @@ onMounted(() => {
 
 <template>
   <div class="main-container">
-    
     <div v-if="currentStep === 'login'" class="card wood-panel fade-in">
       <h1>🎸 Ukulele <span class="highlight">CozyTrack</span></h1>
       <div class="input-group"><label>Nama</label><input v-model="username" class="input-cozy" /></div>
       <div class="input-group"><label>Skill</label><select v-model="userLevel" class="input-cozy"><option value="pemula">Pemula</option><option value="mahir">Mahir</option></select></div>
       <button @click="handleLogin" class="btn-coffee" :disabled="isCheckingName">{{ isCheckingName ? 'Cek...' : 'Masuk' }}</button>
-      
-      <div style="margin-top: 20px; font-size: 0.8rem; cursor: pointer; color: #8D6E63;" @click="showAdminLogin = true">
-        🔐 Admin Login
-      </div>
+      <div style="margin-top: 20px; font-size: 0.8rem; cursor: pointer; color: #8D6E63;" @click="showAdminLogin = true">🔐 Admin Login</div>
     </div>
 
     <div v-if="showAdminLogin" class="overlay-finished fade-in">
@@ -390,56 +322,37 @@ onMounted(() => {
 
     <div v-else-if="currentStep === 'admin'" class="card wood-panel fade-in" style="max-width: 700px; width: 95%;">
       <h2>🛠️ Manajemen Lagu</h2>
-      
       <div class="admin-section" style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 10px; margin-bottom: 20px;">
         <h3 style="margin-top:0; color:#FFCC80">{{ editingSongId ? '✏️ Edit Lagu' : '➕ Tambah Lagu Baru' }}</h3>
-        
-        <div class="input-group">
-          <label>Judul</label><input v-model="newSongTitle" class="input-cozy" placeholder="Judul Lagu" />
-        </div>
-        <div class="input-group">
-          <label>Slug (ID Unik)</label><input v-model="newSongSlug" class="input-cozy" placeholder="kode-lagu" />
-        </div>
-
+        <div class="input-group"><label>Judul</label><input v-model="newSongTitle" class="input-cozy" /></div>
+        <div class="input-group"><label>Slug</label><input v-model="newSongSlug" class="input-cozy" /></div>
         <div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; margin: 10px 0;">
           <label style="color:#FFF"><b>Susun Chord:</b></label>
           <div style="display: flex; gap: 5px; margin-top: 5px;">
-            <select v-model="selectedBaseChord" class="input-cozy" style="flex:1">
-              <option v-for="(val, key) in LIBRARY_CHORDS" :key="key" :value="key">{{ key }}</option>
-            </select>
+            <select v-model="selectedBaseChord" class="input-cozy" style="flex:1"><option v-for="(val, key) in LIBRARY_CHORDS" :key="key" :value="key">{{ key }}</option></select>
             <input v-model="chordCustomLabel" class="input-cozy" placeholder="Lirik.." style="flex:1" />
-            <button @click="addChordToSequence" class="btn-leaf" style="width: auto; padding: 0 15px; margin:0;">+</button>
+            <button @click="addChordToSequence" class="btn-leaf" style="width: auto; padding: 0 15px;">+</button>
           </div>
         </div>
-
-        <div style="margin-bottom: 10px;">
-          <p style="margin:5px 0;">Preview:</p>
-          <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-            <span v-for="(c, i) in newSongSequence" :key="i" style="background: #D84315; padding: 2px 8px; border-radius: 5px; font-size: 0.8rem;">
-              {{ c.name }}
-            </span>
-          </div>
+        <div style="margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 5px;">
+          <span v-for="(c, i) in newSongSequence" :key="i" style="background: #D84315; padding: 2px 8px; border-radius: 5px; font-size: 0.8rem;">{{ c.name }}</span>
         </div>
-
         <div style="display: flex; gap: 10px;">
           <button v-if="newSongSequence.length > 0" @click="removeLastChord" class="btn-coffee" style="background: #555; font-size: 0.8rem;">Hapus Terakhir</button>
-          <button @click="saveSongToDB" class="btn-leaf">{{ editingSongId ? 'Update Lagu' : 'Simpan Lagu' }}</button>
-          <button v-if="editingSongId" @click="cancelEdit" class="btn-coffee" style="background: #777;">Batal Edit</button>
+          <button @click="saveSongToDB" class="btn-leaf">{{ editingSongId ? 'Update' : 'Simpan' }}</button>
+          <button v-if="editingSongId" @click="cancelEdit" class="btn-coffee" style="background: #777;">Batal</button>
         </div>
       </div>
-
-      <h3 style="color:#FFCC80; text-align:left; border-bottom:1px solid #555; padding-bottom:5px;">📂 Daftar Lagu di Database</h3>
+      <h3 style="color:#FFCC80; text-align:left; border-bottom:1px solid #555;">📂 Daftar Lagu</h3>
       <div style="max-height: 200px; overflow-y: auto; text-align: left;">
-        <div v-for="song in availableSongs" :key="song.id" 
-             style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:8px; margin-bottom:5px; border-radius:5px;">
-          <span style="font-weight:bold;">🎵 {{ song.title }}</span>
+        <div v-for="song in availableSongs" :key="song.id" style="display:flex; justify-content:space-between; background:rgba(255,255,255,0.05); padding:8px; margin-bottom:5px; border-radius:5px;">
+          <span>🎵 {{ song.title }}</span>
           <div>
-            <button @click="prepareEditSong(song)" style="background:#FFA726; border:none; border-radius:5px; padding:5px 10px; cursor:pointer; margin-right:5px;">Edit</button>
+            <button @click="prepareEditSong(song)" style="background:#FFA726; border:none; border-radius:5px; padding:5px 10px; margin-right:5px; cursor:pointer;">Edit</button>
             <button @click="deleteSong(song.id)" style="background:#EF5350; border:none; border-radius:5px; padding:5px 10px; cursor:pointer; color:white;">Hapus</button>
           </div>
         </div>
       </div>
-
       <button @click="handleAdminLogout" style="margin-top:20px; background:none; border:none; color: #aaa; cursor:pointer;">Keluar Admin</button>
     </div>
 
