@@ -40,7 +40,6 @@ const isSaving = ref(false);
 const detectedPitch = ref(0);      
 const isPitchCorrect = ref(false); 
 const isSessionFinished = ref(false);
-const isPracticeMode = ref(false);
 const selectedSongTitle = ref(''); 
 const songChords = ref([]); 
 const activeChordIndex = ref(0);
@@ -60,13 +59,16 @@ let audioAnimationId = null;
 const audioBuffer = new Float32Array(2048); 
 
 // --- METRIK MACHINE LEARNING (DATA POINT) ---
+// Session Global (Total satu lagu)
+let sessionTotalMistakes = 0;
+let sessionTotalHesitation = 0;
+let sessionAllEar = [];
+let sessionAllGaze = [];
+let sessionStartTime = 0;
+
+// Per Chord Temp
 let chordStartTime = 0;   
-let tempEarData = [];     
-let tempGazeData = [];
-// Variable baru untuk analisis Paham/Tidak Paham
-let mistakeCount = 0;     // Jumlah nada salah sebelum ketemu nada benar
-let hesitationTime = 0;   // Waktu diam (ragu-ragu) sebelum mulai main
-let isChordStarted = false; // Flag penanda user sudah mulai genjreng
+let isChordStarted = false; 
 
 // ==========================================
 //  ADMIN LOGIC
@@ -96,7 +98,9 @@ const prepareEditSong = async (song) => {
   editingSongId.value = song.id; newSongTitle.value = song.title; newSongSlug.value = song.slug;
   try {
     const { data } = await supabase.from('songs').select('chord_sequence').eq('id', song.id).single();
-    newSongSequence.value = data.chord_sequence; window.scrollTo({ top: 0, behavior: 'smooth' });
+    newSongSequence.value = data.chord_sequence; 
+    const adminPanel = document.querySelector('.admin-panel-scroll');
+    if(adminPanel) adminPanel.scrollTop = 0;
   } catch(err) { alert("Gagal ambil data."); }
 };
 const cancelEdit = () => { editingSongId.value = null; newSongTitle.value = ''; newSongSlug.value = ''; newSongSequence.value = []; };
@@ -121,16 +125,25 @@ const fetchSongsMenu = async () => {
   const { data } = await supabase.from('songs').select('id, title, slug').order('id', { ascending: true });
   availableSongs.value = data || []; isLoadingMenu.value = false;
 };
+
 const handleLogin = async () => {
   if (!username.value.trim()) { alert("Isi nama!"); return; }
-  isCheckingName.value = true; 
-  const { data } = await supabase.from('tracking_logs').select('username').eq('username', username.value).limit(1);
-  if (data?.length) {
-    if (confirm(`Halo ${username.value}! Masuk Mode Latihan (Tidak Direkam)?`)) isPracticeMode.value = true;
-    else isPracticeMode.value = false;
-  } else isPracticeMode.value = false;
+  
+  // Cek apakah user sudah pernah menyelesaikan Latihan Dasar
+  isCheckingName.value = true;
+  const { data } = await supabase.from('tracking_logs')
+    .select('id')
+    .eq('username', username.value)
+    .eq('chord_target', 'Latihan Dasar') // Kita pakai kolom chord_target sebagai penanda judul lagu untuk summary
+    .limit(1);
+
+  if (data && data.length > 0) {
+      alert(`Halo ${username.value}, kamu sudah pernah menyelesaikan data Latihan Dasar sebelumnya. Latihan kali ini tidak akan direkam.`);
+  }
+
   currentStep.value = 'intro'; fetchSongsMenu(); isCheckingName.value = false;
 };
+
 const selectSongAndStart = async (slug) => {
   const { data } = await supabase.from('songs').select('*').eq('slug', slug).single();
   songChords.value = data.chord_sequence; selectedSongTitle.value = data.title; startSession(); 
@@ -148,7 +161,17 @@ const startSession = async () => {
       analyser = audioContext.createAnalyser(); analyser.fftSize = 2048; 
       microphone = audioContext.createMediaStreamSource(stream); microphone.connect(analyser);
   }
-  currentStep.value = 'belajar'; resetChordMetrics(); analyzeAudioLoop(); 
+  
+  // Reset Global Metrics untuk Sesi Baru
+  sessionTotalMistakes = 0;
+  sessionTotalHesitation = 0;
+  sessionAllEar = [];
+  sessionAllGaze = [];
+  sessionStartTime = Date.now();
+
+  currentStep.value = 'belajar'; 
+  resetChordMetrics(); 
+  analyzeAudioLoop(); 
 };
 
 const autoCorrelate = (buf, sampleRate) => {
@@ -171,30 +194,26 @@ const autoCorrelate = (buf, sampleRate) => {
 };
 
 const analyzeAudioLoop = () => {
-  if (currentStep.value !== 'belajar') return;
+  if (currentStep.value !== 'belajar' || isSessionFinished.value) return;
   analyser.getFloatTimeDomainData(audioBuffer);
   const pitch = autoCorrelate(audioBuffer, audioContext.sampleRate);
   
   if (pitch !== -1) { 
     detectedPitch.value = Math.round(pitch); 
     
-    // --- LOGIC DETEKSI KESALAHAN & RAGU (DATA POINT ML) ---
     if (!currentChord.value) return;
     const target = currentChord.value.rootFreq;
 
-    // 1. Deteksi Keragu-raguan (Hesitation)
-    // Jika user baru mulai main setelah sekian detik diam
+    // 1. Deteksi Keragu-raguan
     if (!isChordStarted) {
         isChordStarted = true;
-        hesitationTime = Date.now() - chordStartTime;
+        // Tambahkan ke total hesitasi global
+        sessionTotalHesitation += (Date.now() - chordStartTime);
     }
 
-    // 2. Deteksi Kesalahan (Mistake)
-    // Jika nada terdengar (rms > 0.02) TAPI selisih frekuensi jauh (> 50Hz)
-    // Berarti user salah kunci
+    // 2. Deteksi Kesalahan
     if (Math.abs(pitch - target) > 50) {
-        // Debounce sedikit biar gak spam counter
-        if (Math.random() > 0.85) mistakeCount++;
+        if (Math.random() > 0.85) sessionTotalMistakes++; // Increment global mistakes
     }
 
     checkPitchMatch(pitch); 
@@ -213,42 +232,119 @@ const checkPitchMatch = (hz) => {
 const handleCorrectChord = async () => {
   if (isSaving.value) return;
   isPitchCorrect.value = true; isSaving.value = true; 
-  await saveToSupabase();
+  
+  // Kita HAPUS saveToSupabase di sini.
+  // Kita cuma pindah chord saja.
+  
   setTimeout(() => { nextChord(); }, 1200); 
 };
 
 const resetChordMetrics = () => {
   chordStartTime = Date.now(); 
-  tempEarData = []; tempGazeData = [];
-  mistakeCount = 0; hesitationTime = 0; isChordStarted = false; // Reset ML vars
-  isPitchCorrect.value = false; isSaving.value = false; detectedPitch.value = 0;
+  isChordStarted = false; 
+  isPitchCorrect.value = false; 
+  isSaving.value = false; 
+  detectedPitch.value = 0;
 };
+
 const nextChord = () => {
   if (activeChordIndex.value < songChords.value.length - 1) { 
     activeChordIndex.value++; resetChordMetrics(); 
-  } else { finishSession(); }
-};
-const finishSession = () => { isSessionFinished.value = true; status.value = "Sesi Selesai!"; };
-const handleRetrySameUser = () => {
-  activeChordIndex.value = 0; isPitchCorrect.value = false; isSaving.value = false;
-  isSessionFinished.value = false; resetChordMetrics(); 
+  } else { 
+    finishSession(); 
+  }
 };
 
-const saveToSupabase = async () => {
-  if (isPracticeMode.value) return; 
-  const endTime = Date.now(); 
-  const avgEar = tempEarData.length ? (tempEarData.reduce((a,b)=>a+b,0)/tempEarData.length) : 0;
-  const avgGaze = tempGazeData.length ? (tempGazeData.reduce((a,b)=>a+b,0)/tempGazeData.length) : 0;
+const finishSession = async () => { 
+  isSessionFinished.value = true; 
+  status.value = "Sesi Selesai!"; 
   
-  await supabase.from('tracking_logs').insert([{
-    username: username.value, level: userLevel.value, chord_target: currentChord.value.name,
-    duration_ms: endTime - chordStartTime, // Lama penyelesaian
-    avg_ear: parseFloat(avgEar.toFixed(3)), // Fokus mata
-    avg_gaze: parseFloat(avgGaze.toFixed(3)), // Lirikan
-    mistake_count: mistakeCount, // Jumlah salah nada
-    hesitation_ms: hesitationTime, // Waktu mikir
-    created_at: new Date().toISOString()
-  }]);
+  // DI SINI KITA SAVE DATA (HANYA SEKALI DI AKHIR)
+  await saveSessionData();
+};
+
+const handleRetrySameUser = () => {
+  activeChordIndex.value = 0; isPitchCorrect.value = false; isSaving.value = false;
+  isSessionFinished.value = false; 
+  // Reset global metrics juga jika ulang
+  sessionTotalMistakes = 0;
+  sessionTotalHesitation = 0;
+  sessionAllEar = [];
+  sessionAllGaze = [];
+  sessionStartTime = Date.now();
+  
+  resetChordMetrics(); 
+  analyzeAudioLoop();
+};
+
+// --- FUNGSI SAVE BARU (KHUSUS LATIHAN DASAR & 1 KALI SAJA) ---
+// --- FUNGSI SAVE UPDATE (LEBIH MUDAH UNTUK TESTING) ---
+// --- FUNGSI SAVE: KHUSUS "Latihan Dasar" & HANYA 1 KALI ---
+const saveSessionData = async () => {
+  console.log("=== CEK PENYIMPANAN ===");
+  console.log("Judul Lagu:", selectedSongTitle.value);
+
+  // 1. FILTER JUDUL LAGU (WAJIB "Latihan Dasar")
+  // Kita ubah jadi huruf kecil semua biar aman (case-insensitive)
+  if (selectedSongTitle.value.toLowerCase() !== 'latihan dasar') {
+      console.log("❌ SKIP: Judul bukan 'Latihan Dasar'. Data tidak disimpan.");
+      // Tidak perlu alert biar user tidak terganggu saat main lagu lain
+      return; 
+  }
+
+  // 2. CEK DUPLIKAT DI DATABASE (Agar cuma 1x input per user)
+  console.log("Sedang memeriksa data lama...");
+  
+  try {
+    const { data: existingData, error: checkError } = await supabase
+        .from('tracking_logs')
+        .select('id')
+        .eq('username', username.value)
+        .ilike('chord_target', 'Latihan Dasar') // ilike = ignore case (huruf besar/kecil dianggap sama)
+        .limit(1);
+
+    if (checkError) throw checkError;
+
+    // Kalau data sudah ada, STOP.
+    if (existingData && existingData.length > 0) {
+        console.warn("⚠️ User sudah pernah lulus Latihan Dasar.");
+        alert(`Halo ${username.value}, data "Latihan Dasar" kamu sudah tercatat sebelumnya. Latihan kali ini tidak akan direkam lagi (One-Time Only).`);
+        return;
+    }
+
+    // 3. JIKA BELUM ADA, BARU SIMPAN
+    const endTime = Date.now();
+    const totalDuration = endTime - sessionStartTime;
+    
+    // Hitung rata-rata
+    const avgEar = sessionAllEar.length ? (sessionAllEar.reduce((a,b)=>a+b,0)/sessionAllEar.length) : 0;
+    const avgGaze = sessionAllGaze.length ? (sessionAllGaze.reduce((a,b)=>a+b,0)/sessionAllGaze.length) : 0;
+
+    const payload = {
+      username: username.value, 
+      level: userLevel.value, 
+      chord_target: 'Latihan Dasar', // Kita kunci namanya biar rapi di DB
+      duration_ms: totalDuration,
+      avg_ear: parseFloat(avgEar.toFixed(3)),
+      avg_gaze: parseFloat(avgGaze.toFixed(3)),
+      mistake_count: sessionTotalMistakes,
+      hesitation_ms: sessionTotalHesitation,
+      created_at: new Date().toISOString()
+    };
+
+    console.log("Mengirim Data Latihan Dasar:", payload);
+
+    const { data, error } = await supabase.from('tracking_logs').insert([payload]);
+    
+    if (error) throw error;
+    
+    console.log("✅ SUKSES:", data);
+    alert("✅ Selamat! Data Latihan Dasar berhasil disimpan.");
+
+  } catch (err) {
+    console.error("❌ ERROR SYSTEM:", err);
+    alert(`Terjadi kesalahan sistem: ${err.message}`);
+  }
 };
 
 // --- VISUALISASI ---
@@ -258,7 +354,7 @@ const calculateEAR = (landmarks) => getDistance(landmarks[159], landmarks[145]) 
 const calculateGaze = (landmarks) => getDistance(landmarks[468], landmarks[33]) / getDistance(landmarks[468], landmarks[133]);
 
 const onResults = (results) => {
-  if (currentStep.value !== 'belajar') return;
+  if (currentStep.value !== 'belajar' || isSessionFinished.value) return;
   const canvas = canvasElement.value; const video = videoElement.value;
   if(canvas && video) {
     canvas.width = video.videoWidth; canvas.height = video.videoHeight;
@@ -271,8 +367,9 @@ const onResults = (results) => {
       isWajahTerdeteksi.value = true;
       for (const landmarks of results.multiFaceLandmarks) {
         if(!isSaving.value && !isSessionFinished.value && landmarks[468]) { 
-           tempEarData.push(calculateEAR(landmarks)); 
-           tempGazeData.push(calculateGaze(landmarks)); 
+           // PUSH KE ARRAY GLOBAL
+           sessionAllEar.push(calculateEAR(landmarks)); 
+           sessionAllGaze.push(calculateGaze(landmarks)); 
         }
         if (drawConnectors && FACEMESH_TESSELATION) drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {color: '#00FF00', lineWidth: 1});
         if (landmarks[468] && landmarks[473]) {
@@ -320,7 +417,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-else-if="currentStep === 'admin'" class="card wood-panel fade-in" style="max-width: 700px; width: 95%;">
+    <div v-else-if="currentStep === 'admin'" class="card wood-panel fade-in admin-panel-scroll" style="max-width: 700px; width: 95%; max-height: 85vh; overflow-y: auto;">
       <h2>🛠️ Manajemen Lagu</h2>
       <div class="admin-section" style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 10px; margin-bottom: 20px;">
         <h3 style="margin-top:0; color:#FFCC80">{{ editingSongId ? '✏️ Edit Lagu' : '➕ Tambah Lagu Baru' }}</h3>
@@ -406,4 +503,10 @@ onMounted(() => {
 <style scoped>
 .btn-small-back { background: rgba(0,0,0,0.5); border: 1px solid #aaa; color: white; padding: 5px 10px; border-radius: 10px; cursor: pointer; font-size: 0.8rem; margin-right: 10px; }
 .btn-small-back:hover { background: #555; }
+
+/* Tambahan agar scrollbar di admin terlihat rapi */
+.admin-panel-scroll::-webkit-scrollbar { width: 8px; }
+.admin-panel-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+.admin-panel-scroll::-webkit-scrollbar-thumb { background: #8D6E63; border-radius: 4px; }
+.admin-panel-scroll::-webkit-scrollbar-thumb:hover { background: #6D4C41; }
 </style>
