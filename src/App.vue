@@ -1,9 +1,9 @@
 <script setup>
 import { ref, onMounted, computed, onBeforeUnmount } from 'vue';
 
-// --- IMPORT KONEKSI DARI FILE TERPISAH (SUPAYA RAPI) ---
+// --- IMPORT KONEKSI DARI FILE TERPISAH ---
 import { supabase } from './supabase'; 
-// ------------------------------------------------------
+// -----------------------------------------
 
 import { FaceMesh } from '@mediapipe/face_mesh';
 import { Camera } from '@mediapipe/camera_utils';
@@ -35,12 +35,12 @@ const audioBuffer = new Float32Array(2048);
 // --- DATABASE CHORD ---
 const activeChordIndex = ref(0);
 const chords = [
-  { name: 'C Major', rootFreq: 261.63, dots: [{s:1, f:3}] }, 
-  { name: 'A Minor', rootFreq: 440.00, dots: [{s:4, f:2}] }, 
-  { name: 'F Major', rootFreq: 349.23, dots: [{s:2, f:1}, {s:4, f:2}] }, 
-  { name: 'G Major', rootFreq: 392.00, dots: [{s:3, f:2}, {s:1, f:2}, {s:2, f:3}] }, 
-  { name: 'E Minor', rootFreq: 329.63, dots: [{s:1, f:2}, {s:2, f:3}, {s:3, f:4}] }, 
-  { name: 'D Minor', rootFreq: 293.66, dots: [{s:2, f:1}, {s:4, f:2}, {s:3, f:2}] }  
+  { name: 'C Major (C)', rootFreq: 261.63, dots: [{s:1, f:3}] }, 
+  { name: 'A Minor (Am)', rootFreq: 440.00, dots: [{s:4, f:2}] }, 
+  { name: 'F Major (F)', rootFreq: 349.23, dots: [{s:2, f:1}, {s:4, f:2}] }, 
+  { name: 'G Major (G)', rootFreq: 392.00, dots: [{s:3, f:2}, {s:1, f:2}, {s:2, f:3}] }, 
+  { name: 'E Minor (Em)', rootFreq: 329.63, dots: [{s:1, f:2}, {s:2, f:3}, {s:3, f:4}] }, 
+  { name: 'D Minor (Dm)', rootFreq: 293.66, dots: [{s:2, f:1}, {s:4, f:2}, {s:3, f:2}] }  
 ];
 const currentChord = computed(() => chords[activeChordIndex.value]);
 
@@ -88,20 +88,15 @@ const startSession = async () => {
   } catch (err) { alert("Izin Mic ditolak!"); }
 };
 
-// --- [FINAL REVISI] ALGORITMA AUDIO SENSITIF ---
+// --- ALGORITMA AUDIO SENSITIF (REVISI) ---
 const autoCorrelate = (buf, sampleRate) => {
   let SIZE = buf.length; let rms = 0;
-  
-  // 1. Hitung Power Suara (RMS)
   for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / SIZE);
 
-  // 2. Gate Keeper: Genjrengan
-  // Batas diturunkan ke 0.02 supaya LEBIH PEKA.
-  // Suara ngomong pelan masih lewat, tapi genjrengan pasti masuk.
+  // Batas sensitivitas genjrengan (0.02)
   if (rms < 0.02) return -1; 
 
-  // 3. Deteksi Nada
   let r1 = 0, r2 = SIZE - 1, thres = 0.2;
   for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buf[i]) < thres) { r1 = i; break; }
   for (let i = 1; i < SIZE / 2; i++) if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
@@ -130,7 +125,6 @@ const analyzeAudioLoop = () => {
     detectedPitch.value = Math.round(pitch);
     checkPitchMatch(pitch); 
   } else {
-    // Reset visual jika tidak ada genjrengan
     detectedPitch.value = 0; 
     isPitchCorrect.value = false; 
   }
@@ -140,7 +134,7 @@ const analyzeAudioLoop = () => {
 const checkPitchMatch = (hz) => {
   if (isSaving.value || isSessionFinished.value) return;
   const target = currentChord.value.rootFreq;
-  // Toleransi 35Hz (Cukup standar)
+  // Toleransi 35Hz
   if (hz > (target - 35) && hz < (target + 35)) handleCorrectChord();
 };
 
@@ -170,7 +164,7 @@ const handleLogout = () => {
 };
 
 const saveToSupabase = async () => {
-  if (isPracticeMode.value) return; // Skip jika mode latihan
+  if (isPracticeMode.value) return; 
   const endTime = Date.now(); const duration = endTime - chordStartTime; 
   const sumEar = tempEarData.reduce((a, b) => a + b, 0); const avgEar = tempEarData.length > 0 ? (sumEar / tempEarData.length) : 0;
   const sumGaze = tempGazeData.reduce((a, b) => a + b, 0); const avgGaze = tempGazeData.length > 0 ? (sumGaze / tempGazeData.length) : 0;
@@ -183,7 +177,7 @@ const saveToSupabase = async () => {
   await supabase.from('tracking_logs').insert([payload]);
 };
 
-// --- [FINAL REVISI] VISUALISASI EYE TRACKING CANGGIH ---
+// --- VISUALISASI EYE TRACKING & FACE MESH ---
 const videoElement = ref(null); const canvasElement = ref(null);
 const getDistance = (p1, p2) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
 const calculateEAR = (landmarks) => getDistance(landmarks[159], landmarks[145]) / getDistance(landmarks[33], landmarks[133]);
@@ -191,49 +185,93 @@ const calculateGaze = (landmarks) => getDistance(landmarks[468], landmarks[33]) 
 
 const onResults = (results) => {
   if (currentStep.value !== 'belajar') return;
-  const canvas = canvasElement.value; const video = videoElement.value;
+  
+  const canvas = canvasElement.value;
+  const video = videoElement.value;
   
   if(canvas && video) {
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     
-    // Reset Canvas & Mirror
-    ctx.save(); ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.scale(-1, 1); ctx.translate(-canvas.width, 0);
+    // 1. Reset & Mirror
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(-1, 1);
+    ctx.translate(-canvas.width, 0);
     
-    // Gambar Video Asli
+    // 2. Gambar Background Video
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
     if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
       isWajahTerdeteksi.value = true;
+      
       for (const landmarks of results.multiFaceLandmarks) {
         
-        // Simpan Data
+        // --- LOGIC DATA (Backstage) ---
         if(!isSaving.value && !isSessionFinished.value) { 
-           tempEarData.push(calculateEAR(landmarks)); 
-           tempGazeData.push(calculateGaze(landmarks)); 
+           if(landmarks[468] && landmarks[473]) {
+             tempEarData.push(calculateEAR(landmarks)); 
+             tempGazeData.push(calculateGaze(landmarks)); 
+           }
         }
 
-        // --- VISUALISASI KEREN (IRON MAN STYLE) ---
-        // A. Garis Wajah (Cyan & Tebal)
-        drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, 
-          {color: '#00E5FF80', lineWidth: 1.5}); 
-        
-        // B. Titik Mata (Merah Menyala)
-        const leftIris = landmarks[468]; const rightIris = landmarks[473];
-        ctx.fillStyle = "#FF1744"; 
-        ctx.beginPath(); ctx.arc(leftIris.x*canvas.width, leftIris.y*canvas.height, 5, 0, 2*Math.PI); ctx.fill();
-        ctx.beginPath(); ctx.arc(rightIris.x*canvas.width, rightIris.y*canvas.height, 5, 0, 2*Math.PI); ctx.fill();
+        // ==========================================
+        //  VISUALISASI EXTRA: JARING & TITIK
+        // ==========================================
 
-        // C. Tulisan "TRACKING AKTIF"
-        ctx.scale(-1, 1); 
-        ctx.fillStyle = "#00E5FF"; ctx.font = "bold 16px Courier New";
-        ctx.fillText("TRACKING AKTIF", -(canvas.width - 20), 30);
-        ctx.restore(); // Restore context loop (Penting!)
+        // A. JARING-JARING (MESH) - Pake Library
+        if (FACEMESH_TESSELATION) {
+             drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {color: '#00FF0030', lineWidth: 1});
+        }
+
+        // B. TITIK-TITIK WAJAH (DOTS) - Gambar Manual (Cadangan kalau Mesh gagal)
+        // Ini akan membuat wajah penuh dengan titik-titik Cyan
+        ctx.fillStyle = "#00FFFF";
+        for (let i = 0; i < landmarks.length; i+=2) { // i+=2 biar gak terlalu padat
+             const x = landmarks[i].x * canvas.width;
+             const y = landmarks[i].y * canvas.height;
+             ctx.fillRect(x, y, 2, 2); // Gambar titik kecil 2x2
+        }
+
+        // C. MATA (EYE TRACKING) - Dibuat Sangat Jelas
+        if (landmarks[468] && landmarks[473]) {
+            const leftIris = landmarks[468];
+            const rightIris = landmarks[473];
+
+            // Lingkaran Merah di Mata
+            ctx.fillStyle = "#FF0000"; 
+            ctx.beginPath(); ctx.arc(leftIris.x * canvas.width, leftIris.y * canvas.height, 6, 0, 2*Math.PI); ctx.fill();
+            ctx.beginPath(); ctx.arc(rightIris.x * canvas.width, rightIris.y * canvas.height, 6, 0, 2*Math.PI); ctx.fill();
+            
+            // Crosshair Kuning (Target)
+            ctx.strokeStyle = "#FFFF00"; ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(leftIris.x * canvas.width - 10, leftIris.y * canvas.height);
+            ctx.lineTo(leftIris.x * canvas.width + 10, leftIris.y * canvas.height);
+            ctx.moveTo(leftIris.x * canvas.width, leftIris.y * canvas.height - 10);
+            ctx.lineTo(leftIris.x * canvas.width, leftIris.y * canvas.height + 10);
+            ctx.stroke();
+        }
+
+        // D. KOTAK HUD (Hijau)
+        const nose = landmarks[1];
+        if(nose) {
+            ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 3;
+            ctx.strokeRect((nose.x * canvas.width) - 90, (nose.y * canvas.height) - 110, 180, 220);
+            
+            // Teks Status
+            ctx.scale(-1, 1);
+            ctx.fillStyle = "#00FF00"; ctx.font = "bold 20px Courier New";
+            ctx.fillText("TRACKING: ON", -(nose.x * canvas.width) - 80, (nose.y * canvas.height) - 120);
+            ctx.scale(-1, 1);
+        }
       } 
     } else { 
-      isWajahTerdeteksi.value = false; ctx.restore(); 
+      isWajahTerdeteksi.value = false; 
     }
+    
+    ctx.restore();
   }
 }
 
@@ -260,8 +298,8 @@ onMounted(() => {
       <div class="input-group">
         <label>Level Skill</label>
         <select v-model="userLevel" class="input-cozy" :disabled="isCheckingName">
-          <option value="pemula">🌱 Baru Belajar</option>
-          <option value="mahir">☕ Sudah Mahir</option>
+          <option value="pemula">🌱 PEMULA</option>
+          <option value="mahir">☕ MAHIR</option>
         </select>
       </div>
       <button @click="handleLogin" class="btn-coffee" :disabled="isCheckingName">
