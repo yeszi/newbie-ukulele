@@ -1,9 +1,9 @@
 <script setup>
 import { ref, onMounted, computed, onBeforeUnmount } from 'vue';
 
-// --- IMPORT KONEKSI DARI FILE TERPISAH ---
+// --- IMPORT KONEKSI DARI FILE TERPISAH (SUPAYA RAPI) ---
 import { supabase } from './supabase'; 
-// -----------------------------------------
+// ------------------------------------------------------
 
 import { FaceMesh } from '@mediapipe/face_mesh';
 import { Camera } from '@mediapipe/camera_utils';
@@ -88,7 +88,7 @@ const startSession = async () => {
   } catch (err) { alert("Izin Mic ditolak!"); }
 };
 
-// --- [REVISI] ALGORITMA AUDIO (Filter Suara Ngomong) ---
+// --- [FINAL REVISI] ALGORITMA AUDIO SENSITIF ---
 const autoCorrelate = (buf, sampleRate) => {
   let SIZE = buf.length; let rms = 0;
   
@@ -96,10 +96,10 @@ const autoCorrelate = (buf, sampleRate) => {
   for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / SIZE);
 
-  // 2. Logic Genjrengan: 
-  // Jika suara pelan (ngomong biasa), return -1.
-  // Mic hanya aktif jika ada hentakan keras (RMS > 0.15)
-  if (rms < 0.15) return -1; 
+  // 2. Gate Keeper: Genjrengan
+  // Batas diturunkan ke 0.02 supaya LEBIH PEKA.
+  // Suara ngomong pelan masih lewat, tapi genjrengan pasti masuk.
+  if (rms < 0.02) return -1; 
 
   // 3. Deteksi Nada
   let r1 = 0, r2 = SIZE - 1, thres = 0.2;
@@ -140,7 +140,7 @@ const analyzeAudioLoop = () => {
 const checkPitchMatch = (hz) => {
   if (isSaving.value || isSessionFinished.value) return;
   const target = currentChord.value.rootFreq;
-  // Toleransi 35Hz
+  // Toleransi 35Hz (Cukup standar)
   if (hz > (target - 35) && hz < (target + 35)) handleCorrectChord();
 };
 
@@ -183,7 +183,7 @@ const saveToSupabase = async () => {
   await supabase.from('tracking_logs').insert([payload]);
 };
 
-// --- MEDIA PIPE (FACE TRACKING) ---
+// --- [FINAL REVISI] VISUALISASI EYE TRACKING CANGGIH ---
 const videoElement = ref(null); const canvasElement = ref(null);
 const getDistance = (p1, p2) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
 const calculateEAR = (landmarks) => getDistance(landmarks[159], landmarks[145]) / getDistance(landmarks[33], landmarks[133]);
@@ -192,23 +192,51 @@ const calculateGaze = (landmarks) => getDistance(landmarks[468], landmarks[33]) 
 const onResults = (results) => {
   if (currentStep.value !== 'belajar') return;
   const canvas = canvasElement.value; const video = videoElement.value;
+  
   if(canvas && video) {
     canvas.width = video.videoWidth; canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
+    
+    // Reset Canvas & Mirror
     ctx.save(); ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.scale(-1, 1); ctx.translate(-canvas.width, 0);
+    
+    // Gambar Video Asli
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
     if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
       isWajahTerdeteksi.value = true;
       for (const landmarks of results.multiFaceLandmarks) {
-        if(!isSaving.value && !isSessionFinished.value) { tempEarData.push(calculateEAR(landmarks)); tempGazeData.push(calculateGaze(landmarks)); }
-        drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {color: '#D7CCC850', lineWidth: 0.5}); 
-        const iris = landmarks[468]; ctx.beginPath(); ctx.arc(iris.x*canvas.width, iris.y*canvas.height, 4, 0, 2*Math.PI); ctx.fillStyle = "#FF7043"; ctx.fill(); 
+        
+        // Simpan Data
+        if(!isSaving.value && !isSessionFinished.value) { 
+           tempEarData.push(calculateEAR(landmarks)); 
+           tempGazeData.push(calculateGaze(landmarks)); 
+        }
+
+        // --- VISUALISASI KEREN (IRON MAN STYLE) ---
+        // A. Garis Wajah (Cyan & Tebal)
+        drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, 
+          {color: '#00E5FF80', lineWidth: 1.5}); 
+        
+        // B. Titik Mata (Merah Menyala)
+        const leftIris = landmarks[468]; const rightIris = landmarks[473];
+        ctx.fillStyle = "#FF1744"; 
+        ctx.beginPath(); ctx.arc(leftIris.x*canvas.width, leftIris.y*canvas.height, 5, 0, 2*Math.PI); ctx.fill();
+        ctx.beginPath(); ctx.arc(rightIris.x*canvas.width, rightIris.y*canvas.height, 5, 0, 2*Math.PI); ctx.fill();
+
+        // C. Tulisan "TRACKING AKTIF"
+        ctx.scale(-1, 1); 
+        ctx.fillStyle = "#00E5FF"; ctx.font = "bold 16px Courier New";
+        ctx.fillText("TRACKING AKTIF", -(canvas.width - 20), 30);
+        ctx.restore(); // Restore context loop (Penting!)
       } 
-    } else { isWajahTerdeteksi.value = false; }
-    ctx.restore();
+    } else { 
+      isWajahTerdeteksi.value = false; ctx.restore(); 
+    }
   }
 }
+
 onMounted(() => {
   const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
   faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
