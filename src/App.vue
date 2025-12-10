@@ -3,8 +3,6 @@ import { ref, onMounted, computed, onBeforeUnmount } from 'vue';
 import { supabase } from './supabase'; 
 import { FaceMesh } from '@mediapipe/face_mesh';
 import { Camera } from '@mediapipe/camera_utils';
-
-// --- IMPORT VISUALISASI JARING ---
 import { drawConnectors } from '@mediapipe/drawing_utils'; 
 import { FACEMESH_TESSELATION, FACEMESH_RIGHT_EYE, FACEMESH_LEFT_EYE } from '@mediapipe/face_mesh'; 
 
