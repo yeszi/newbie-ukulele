@@ -109,3 +109,237 @@ button:active { transform: translateY(2px); }
   .frame-wood { width: 640px; }
   .chord-easel { width: 300px; }
 }
+
+/* --- 1. IMPORTS & FONTS --- */
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&family=Poppins:wght@300;400;600;700&display=swap');
+
+:root {
+  font-family: 'Nunito', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  color-scheme: dark;
+
+  /* PALET WARNA KAYU */
+  --bg-dark: #3E2723;       
+  --bg-light: #4E342E;      
+  --card-bg: rgba(78, 52, 46, 0.95);
+  --text-cream: #EFEBE9;
+  --accent-terra: #D84315;  
+  --accent-leaf: #66BB6A;   
+  --wood-border: #8D6E63;
+}
+
+/* --- 2. GLOBAL RESET & BODY --- */
+body {
+  margin: 0;
+  padding: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #3E2723 0%, #21120e 100%);
+  color: var(--text-cream);
+  overflow-x: hidden; /* Mencegah scroll samping di HP */
+}
+
+#app { width: 100%; min-height: 100vh; text-align: center; }
+
+/* --- 3. CONTAINER UTAMA --- */
+.main-container { 
+  display: flex; 
+  flex-direction: column;
+  align-items: center; 
+  justify-content: center; /* Center vertikal untuk login */
+  min-height: 100vh; 
+  width: 100%;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+/* --- 4. CARD STYLES (Login, Admin, Intro) --- */
+/* Agar bagus di HP, kita pakai Width %, tapi dibatas Max Width untuk Desktop */
+.wood-panel {
+  background: rgba(255, 255, 255, 0.05); 
+  -webkit-backdrop-filter: blur(12px); /* Support iPhone */
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 30px; 
+  border-radius: 20px; 
+  
+  /* RESPONSIVE WIDTH */
+  width: 100%; 
+  max-width: 420px; /* Mentok di 420px kalau di Desktop */
+  
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  position: relative; 
+  margin: auto;
+  box-sizing: border-box;
+}
+
+.note-paper {
+  background: #FFF3E0; 
+  color: #5D4037;
+  padding: 15px; 
+  border-radius: 10px; 
+  text-align: left; 
+  margin: 20px 0;
+  box-shadow: 2px 2px 5px rgba(0,0,0,0.1); 
+  transform: rotate(-1deg);
+}
+.note-paper p { margin: 5px 0; font-weight: 600; font-size: 0.95rem; }
+
+h1 { font-size: 2em; line-height: 1.1; color: #FFCC80; margin-bottom: 5px; font-weight: 900; }
+h2 { font-size: 1.5em; color: #FFCC80; margin-bottom: 15px; }
+.subtitle { color: #BCAAA4; font-size: 0.9rem; margin-bottom: 25px; }
+
+/* --- 5. INPUTS & BUTTONS --- */
+.input-group { text-align: left; margin-bottom: 15px; width: 100%; }
+.input-group label { display: block; color: #D7CCC8; font-size: 0.85rem; margin-bottom: 5px; }
+
+.input-cozy {
+  width: 100%; padding: 12px; background: rgba(0,0,0,0.2); 
+  border: 2px solid #5D4037; border-radius: 12px; color: #FFF; font-family: inherit;
+  transition: 0.3s; box-sizing: border-box; font-size: 1rem;
+}
+.input-cozy:focus { border-color: #FFCC80; outline: none; background: rgba(0,0,0,0.4); }
+
+/* Tombol Responsif */
+button { cursor: pointer; font-family: inherit; transition: transform 0.1s; }
+button:active { transform: translateY(2px); }
+
+.btn-coffee, .btn-leaf {
+  width: 100%; padding: 14px; border: none; border-radius: 12px; 
+  font-weight: 800; font-size: 1rem; margin-top: 5px;
+}
+.btn-coffee { background: #D84315; color: white; box-shadow: 0 4px 0 #BF360C; }
+.btn-leaf { background: #66BB6A; color: #1B5E20; box-shadow: 0 4px 0 #388E3C; }
+.btn-coffee:disabled, .btn-leaf:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; }
+
+.btn-small-back {
+  background: rgba(0,0,0,0.5); border: 1px solid #aaa; color: white;
+  padding: 8px 15px; border-radius: 8px; cursor: pointer;
+  font-size: 0.85rem; margin: 5px;
+}
+
+/* --- 6. AREA BELAJAR (WORKSPACE) --- */
+.room-container {
+  display: flex; flex-direction: column; align-items: center; 
+  width: 100%; padding-top: 10px; flex: 1;
+}
+
+/* Top Shelf (Status Bar) - Agar rapi di HP */
+.top-shelf { 
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+  gap: 10px; margin-bottom: 20px; width: 100%;
+}
+
+.status-badge, .freq-badge, .practice-badge, .record-badge {
+  background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: 20px;
+  font-weight: 700; display: flex; align-items: center; gap: 6px; 
+  font-size: 0.8rem; border: 1px solid rgba(255,255,255,0.1);
+  white-space: nowrap; /* Biar teks gak turun ke bawah */
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; }
+.status-ok .dot { background: #66BB6A; box-shadow: 0 0 8px #66BB6A; }
+.status-warn .dot { background: #FF7043; }
+.practice-badge { color: #FFD54F; border-color: #FFD54F; }
+.record-badge { color: #FF5252; border-color: #FF5252; animation: blink 2s infinite; }
+
+/* --- 7. WORKSPACE LAYOUT (KUNCI RESPONSIVE) --- */
+.workspace {
+  display: flex; 
+  flex-direction: column; /* DEFAULT HP: Atas (Video) - Bawah (Chord) */
+  gap: 20px; 
+  align-items: center; 
+  justify-content: flex-start;
+  width: 100%; 
+  max-width: 1200px;
+}
+
+/* Frame Kamera - Agar video tidak gepeng di HP */
+.frame-wood {
+  position: relative; 
+  width: 100%; /* Penuh lebar HP */
+  max-width: 640px; /* Batas desktop */
+  aspect-ratio: 4/3; /* Jaga rasio video biar proporsional */
+  border: 8px solid #5D4037; border-radius: 15px; overflow: hidden;
+  background: #000; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+.frame-wood.pulse-success { border-color: #66BB6A; transform: scale(1.01); transition: 0.3s; }
+.input_video { display: none; }
+.output_canvas { width: 100%; height: 100%; object-fit: cover; }
+
+/* Panel Chord */
+.chord-easel {
+  width: 100%; 
+  max-width: 400px; 
+  padding: 20px; 
+  display: flex; flex-direction: column; align-items: center; 
+  background: #FFF3E0; color: #3E2723;
+  box-sizing: border-box;
+}
+
+.chord-visual {
+  background: #fff; padding: 10px; border-radius: 15px; border: 2px solid #8D6E63;
+  margin-bottom: 15px; box-shadow: inset 0 0 10px rgba(0,0,0,0.1);
+  width: 140px; height: 160px; /* Ukuran Fix biar gambar chord stabil */
+}
+
+.chord-info { text-align: center; }
+.title-chord { color: #D84315; font-size: 2.2rem; margin: 0; line-height: 1.1; }
+.label-chord { font-size: 0.9rem; text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
+.hz-info { font-size: 0.85rem; color: #5D4037; opacity: 0.8; margin-top: 5px; }
+
+/* --- 8. ANIMASI & OVERLAY --- */
+.overlay-finished {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(62, 39, 35, 0.95); border-radius: 20px;
+  display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10;
+  padding: 20px; box-sizing: border-box;
+}
+.action-buttons { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+
+.success-stamp {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-10deg);
+  font-size: 2.5rem; font-weight: 900; color: #66BB6A; border: 5px solid #66BB6A; 
+  padding: 10px 20px; border-radius: 10px; background: rgba(255,255,255,0.95); z-index: 5;
+  white-space: nowrap; pointer-events: none;
+}
+
+@keyframes blink { 0% {opacity: 1} 50% {opacity: 0.5} 100% {opacity: 1} }
+.fade-in { animation: fadeIn 0.6s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ========================================= */
+/* === MEDIA QUERY: TABLET & DESKTOP === */
+/* ========================================= */
+
+/* Tablet (Mulai lebar 600px) */
+@media (min-width: 600px) {
+  .wood-panel { padding: 40px; }
+  h1 { font-size: 2.5rem; }
+  .status-badge, .freq-badge { font-size: 0.9rem; }
+}
+
+/* Desktop (Mulai lebar 900px) */
+@media (min-width: 900px) {
+  .main-container { padding: 40px; }
+
+  /* Layout berubah jadi Kiri-Kanan */
+  .workspace {
+    flex-direction: row; /* Side by side */
+    align-items: flex-start; /* Rata atas */
+    gap: 40px;
+  }
+
+  /* Video di Kiri */
+  .frame-wood {
+    width: 640px; /* Ukuran Fix Desktop */
+    flex-shrink: 0; /* Jangan mengecil */
+  }
+
+  /* Chord di Kanan */
+  .chord-easel {
+    width: 300px; /* Ukuran Fix Sidebar */
+    position: sticky; /* Agar tetap terlihat saat scroll (opsional) */
+    top: 20px;
+  }
+}
